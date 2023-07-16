@@ -1,10 +1,9 @@
 package application;
 
-import framework.Qualifier;
 import framework.Service;
 
 @Service
-@Qualifier("EmailSender")
+//@Qualifier("EmailSender")
 public class EmailSender implements IEmailSender {
     @Override
     public void sendEmail(String content) {

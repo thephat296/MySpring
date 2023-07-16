@@ -62,7 +62,7 @@ public class FWContext {
         List<Object> foundBeans = beans.stream()
                 .filter(bean -> bean.getClass().equals(clazz) ||
                         Arrays.stream(bean.getClass().getInterfaces()).collect(Collectors.toSet()).contains(clazz))
-                .filter(bean -> qualifier == null || bean.getClass().getDeclaredAnnotation(Qualifier.class).value().equals(qualifier.value()))
+                .filter(bean -> qualifier == null || qualifier.equals(bean.getClass().getDeclaredAnnotation(Qualifier.class)))
                 .toList();
         if (foundBeans.isEmpty()) throw new RuntimeException("No bean found!");
         if (foundBeans.size() >= 2) throw new RuntimeException("Multiple beans found!");
