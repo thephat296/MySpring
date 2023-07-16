@@ -29,15 +29,32 @@ public class FWContext {
     private void performDI() {
         try {
             for (Class<?> clazz : beans.keySet()) {
-//                Class<?> clazz = bean.getClass();
                 Object bean = beans.get(clazz);
-                /* field injection */
-                if (bean != null) {
-                    for (Field field : clazz.getDeclaredFields()) {
-                        if (field.isAnnotationPresent(Autowired.class)) {
-                            field.setAccessible(true);
-                            field.set(bean, beans.get(field.getType()));
+                /* constructor injection */
+                Constructor<?>[] constructors = clazz.getConstructors();
+                if (constructors.length == 1 && constructors[0].isAnnotationPresent(Autowired.class)) {
+                    Constructor<?> constructor = constructors[0];
+                    Class<?>[] parameterTypes = constructor.getParameterTypes();
+                    Object[] dependencies = new Object[parameterTypes.length];
+                    for (int i = 0; i < parameterTypes.length; i++) {
+                        dependencies[i] = resolveDependency(parameterTypes[i], constructor.getParameters()[i].getAnnotation(Qualifier.class));
+                        if (dependencies[i] == null) {
+                            throw new RuntimeException("Dependency not found for constructor parameter: " + constructor.getName());
                         }
+                    }
+                    try {
+                        bean = constructor.newInstance(dependencies);
+                        beans.put(clazz, bean);
+                    } catch (Exception e) {
+                        throw new RuntimeException("Failed to perform dependency injection for constructor: " + constructor.getName(), e);
+                    }
+                }
+
+                /* field injection */
+                for (Field field : clazz.getDeclaredFields()) {
+                    if (field.isAnnotationPresent(Autowired.class)) {
+                        field.setAccessible(true);
+                        field.set(bean, beans.get(field.getType()));
                     }
                 }
 
@@ -57,26 +74,6 @@ public class FWContext {
                         } catch (Exception e) {
                             throw new RuntimeException("Failed to perform dependency injection for setter method: " + method.getName(), e);
                         }
-                    }
-                }
-
-                /* constructor injection */
-                Constructor<?>[] constructors = clazz.getConstructors();
-                if (constructors.length == 1 && constructors[0].isAnnotationPresent(Autowired.class)) {
-                    Constructor<?> constructor = constructors[0];
-                    Class<?>[] parameterTypes = constructor.getParameterTypes();
-                    Object[] dependencies = new Object[parameterTypes.length];
-                    for (int i = 0; i < parameterTypes.length; i++) {
-                        dependencies[i] = resolveDependency(parameterTypes[i], constructor.getParameters()[i].getAnnotation(Qualifier.class));
-                        if (dependencies[i] == null) {
-                            throw new RuntimeException("Dependency not found for constructor parameter: " + constructor.getName());
-                        }
-                    }
-                    try {
-                        bean = constructor.newInstance(dependencies);
-                        beans.put(clazz, bean);
-                    } catch (Exception e) {
-                        throw new RuntimeException("Failed to perform dependency injection for constructor: " + constructor.getName(), e);
                     }
                 }
             }
