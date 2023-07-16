@@ -37,7 +37,13 @@ public class FWContext {
     private void injectField(Object bean) {
         for (Field field : bean.getClass().getDeclaredFields()) {
             if (field.isAnnotationPresent(Autowired.class)) {
-                Object instance = getBean(field.getType());
+                Qualifier qualifier = null;
+                try {
+                    qualifier = field.getAnnotation(Qualifier.class);
+                } catch (NullPointerException ignored) {
+                }
+
+                Object instance = getBean(field.getType(), qualifier);
                 field.setAccessible(true);
                 try {
                     field.set(bean, instance);
@@ -49,10 +55,17 @@ public class FWContext {
     }
 
     public Object getBean(Class<?> clazz) {
-        return beans.stream()
+        return getBean(clazz, null);
+    }
+
+    public Object getBean(Class<?> clazz, Qualifier qualifier) {
+        List<Object> foundBeans = beans.stream()
                 .filter(bean -> bean.getClass().equals(clazz) ||
                         Arrays.stream(bean.getClass().getInterfaces()).collect(Collectors.toSet()).contains(clazz))
-                .findFirst()
-                .orElse(null);
+                .filter(bean -> qualifier == null || bean.getClass().getDeclaredAnnotation(Qualifier.class).value().equals(qualifier.value()))
+                .toList();
+        if (foundBeans.isEmpty()) throw new RuntimeException("No bean found!");
+        if (foundBeans.size() >= 2) throw new RuntimeException("Multiple beans found!");
+        return foundBeans.get(0);
     }
 }
