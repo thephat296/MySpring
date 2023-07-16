@@ -5,10 +5,12 @@ import framework.Service;
 
 @Service
 public class BankService {
-    private EmailSender emailSender;
 
     @Autowired
-    public BankService(EmailSender emailSender) {
+//    @Qualifier("Email")
+    private IEmailSender emailSender;
+
+    public BankService(IEmailSender emailSender) {
         this.emailSender = emailSender;
     }
 
