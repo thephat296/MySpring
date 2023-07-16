@@ -13,28 +13,31 @@ public class FWContext {
     private final Map<Class<?>, Object> beans = new HashMap<>();
 
     public void scanAndInstantiate(String basePackage) {
-        try {
-            Reflections reflections = new Reflections(basePackage);
-            Set<Class<?>> serviceTypes = reflections.getTypesAnnotatedWith(Service.class);
-            for (Class<?> serviceClass : serviceTypes) {
-                beans.put(serviceClass, serviceClass.getDeclaredConstructor().newInstance());
+        Reflections reflections = new Reflections(basePackage);
+        Set<Class<?>> serviceTypes = reflections.getTypesAnnotatedWith(Service.class);
+        for (Class<?> serviceClass : serviceTypes) {
+            Object instance = null;
+            try {
+                instance = serviceClass.getDeclaredConstructor().newInstance();
+            } catch (Exception ignored) {
             }
-            performDI();
-
-        } catch (Exception ex) {
-            ex.printStackTrace();
+            beans.put(serviceClass, instance);
         }
+        performDI();
     }
 
     private void performDI() {
         try {
-            for (Object bean : beans.values()) {
-                Class<?> clazz = bean.getClass();
+            for (Class<?> clazz : beans.keySet()) {
+//                Class<?> clazz = bean.getClass();
+                Object bean = beans.get(clazz);
                 /* field injection */
-                for (Field field : clazz.getDeclaredFields()) {
-                    if (field.isAnnotationPresent(Autowired.class)) {
-                        field.setAccessible(true);
-                        field.set(bean, beans.get(field.getType()));
+                if (bean != null) {
+                    for (Field field : clazz.getDeclaredFields()) {
+                        if (field.isAnnotationPresent(Autowired.class)) {
+                            field.setAccessible(true);
+                            field.set(bean, beans.get(field.getType()));
+                        }
                     }
                 }
 
@@ -88,7 +91,7 @@ public class FWContext {
             return beans.get(Class.forName(className));
         } else {
             return beans.values().stream()
-                    .filter(bean -> dependencyType.isAssignableFrom(bean.getClass()))
+                    .filter(bean -> bean != null && dependencyType.isAssignableFrom(bean.getClass()))
                     .findFirst()
                     .orElse(null);
         }

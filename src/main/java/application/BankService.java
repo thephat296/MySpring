@@ -5,8 +5,12 @@ import framework.Service;
 
 @Service
 public class BankService {
-    @Autowired
     private EmailSender emailSender;
+
+    @Autowired
+    public BankService(EmailSender emailSender) {
+        this.emailSender = emailSender;
+    }
 
     public void setEmailService(EmailSender emailSender) {
         this.emailSender = emailSender;
