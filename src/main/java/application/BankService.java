@@ -7,12 +7,7 @@ import framework.Service;
 public class BankService {
 
     @Autowired
-//    @Qualifier("Email")
     private IEmailSender emailSender;
-
-    public BankService(IEmailSender emailSender) {
-        this.emailSender = emailSender;
-    }
 
     public void setEmailService(EmailSender emailSender) {
         this.emailSender = emailSender;
