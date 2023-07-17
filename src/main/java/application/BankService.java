@@ -1,12 +1,9 @@
 package application;
 
-import framework.ApplicationEventPublisher;
-import framework.Autowired;
-import framework.Scheduled;
-import framework.Service;
+import framework.*;
 
 @Service
-public class BankService {
+public class BankService implements IBankService {
 
     private IEmailSender emailSender;
 
@@ -22,6 +19,7 @@ public class BankService {
         this.emailSender = emailSender;
     }
 
+    @Async
     public void deposit() {
 //        emailSender.sendEmail("deposit");
         publisher.publishEvent(new DepositEvent("deposit"));

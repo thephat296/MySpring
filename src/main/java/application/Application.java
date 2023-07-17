@@ -6,7 +6,7 @@ import framework.FWApplication;
 public class Application implements Runnable {
 
     @Autowired
-    private BankService bankService;
+    private IBankService bankService;
 
     public static void main(String[] args) {
         FWApplication.run(Application.class);

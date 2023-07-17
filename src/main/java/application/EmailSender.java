@@ -19,6 +19,6 @@ public class EmailSender implements IEmailSender {
 
     @EventListener
     public void onEvent(DepositEvent event) {
-        sendEmail(event.getMessage());
+        sendEmail(event.message());
     }
 }

@@ -5,9 +5,7 @@ import org.reflections.Reflections;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
+import java.lang.reflect.*;
 import java.text.ParseException;
 import java.time.Instant;
 import java.util.*;
@@ -38,6 +36,8 @@ public class FWApplication {
     }
 
     public void scanAndInstantiate(String basePackage) {
+        loadProperties();
+        setActiveProfile();
         Reflections reflections = new Reflections(basePackage);
         Set<Class<?>> serviceTypes = reflections.getTypesAnnotatedWith(Service.class);
         for (Class<?> serviceClass : serviceTypes) {
@@ -47,12 +47,39 @@ public class FWApplication {
                 lazyConstructionClazz.add(serviceClass);
             }
         }
-        loadProperties();
-        setActiveProfile();
+        injectConstructors();
+        wrapAsyncMethods();
         initEventPublisher();
         performDI();
         initEventListener();
         performScheduled();
+    }
+
+    private void injectConstructors() {
+        while (!lazyConstructionClazz.isEmpty()) {
+            int size = lazyConstructionClazz.size();
+            Iterator<Class<?>> iterator = lazyConstructionClazz.iterator();
+            while (iterator.hasNext()) {
+                injectConstructor(iterator.next());
+                iterator.remove();
+            }
+            if (lazyConstructionClazz.size() == size) {
+                throw new RuntimeException("Circular dependency when performing constructor injection");
+            }
+        }
+    }
+
+    private void wrapAsyncMethods() {
+        for (int i = 0; i < beans.size(); i++) {
+            Object bean = beans.get(i);
+            if (bean instanceof AsyncProxy) continue;
+            boolean isAsyncAnnotationPresent =
+                    Arrays.stream(bean.getClass().getMethods()).anyMatch(method -> method.isAnnotationPresent(Async.class));
+            if (!isAsyncAnnotationPresent) continue;
+            Class<?> clazz = bean.getClass();
+            Object proxyBean = Proxy.newProxyInstance(clazz.getClassLoader(), clazz.getInterfaces(), new AsyncProxy(bean));
+            beans.set(i, proxyBean);
+        }
     }
 
     private void setActiveProfile() {
@@ -95,9 +122,6 @@ public class FWApplication {
     }
 
     private void performDI() {
-        for (Class<?> clazz : lazyConstructionClazz) {
-            injectConstructor(clazz);
-        }
         for (Object bean : beans) {
             injectField(bean);
             injectSetter(bean);
@@ -114,25 +138,49 @@ public class FWApplication {
         Class<?>[] parameterTypes = constructor.getParameterTypes();
         Object[] dependencies = new Object[parameterTypes.length];
         for (int i = 0; i < parameterTypes.length; i++) {
-            dependencies[i] = getBean(parameterTypes[i], constructor.getParameters()[i].getAnnotation(Qualifier.class));
+            try {
+                dependencies[i] = getBean(parameterTypes[i], constructor.getParameters()[i].getAnnotation(Qualifier.class));
+            } catch (NoBeanFoundException e) {
+                return;
+            }
         }
         try {
-            beans.add(constructor.newInstance(dependencies));
+            Object bean = constructor.newInstance(dependencies);
+            boolean isAsyncAnnotationPresent =
+                    Arrays.stream(bean.getClass().getMethods()).anyMatch(method -> method.isAnnotationPresent(Async.class));
+            if (isAsyncAnnotationPresent) {
+                Object proxyBean = Proxy.newProxyInstance(clazz.getClassLoader(), clazz.getInterfaces(), new AsyncProxy(bean));
+                beans.add(proxyBean);
+            } else {
+                beans.add(bean);
+            }
         } catch (Exception e) {
             throw new RuntimeException("Failed to perform dependency injection for constructor: " + constructor.getName(), e);
         }
     }
 
     private void injectField(Object bean) {
-        for (Field field : bean.getClass().getDeclaredFields()) {
+        Object originalBean = getOriginalObject(bean);
+        for (Field field : originalBean.getClass().getDeclaredFields()) {
             if (!field.isAnnotationPresent(Autowired.class)) continue;
             Qualifier qualifier = field.getAnnotation(Qualifier.class);
-            Object dependency = getBean(field.getType(), qualifier);
+            Object dependency;
+            try {
+                dependency = getBean(field.getType(), qualifier);
+            } catch (NoBeanFoundException e) {
+                throw new RuntimeException(e);
+            }
             field.setAccessible(true);
             try {
-                field.set(bean, dependency);
-            } catch (IllegalAccessException e) {
-                throw new RuntimeException("Failed to perform dependency injection for field: " + field.getName(), e);
+                field.set(originalBean, dependency);
+            } catch (IllegalAccessException | IllegalArgumentException e) {
+                String message;
+                if (dependency instanceof Proxy) {
+                    message = "Dependency " + field.getName() + " using @Async annotation must be an interface instead of concrete class";
+                } else {
+                    message = "Failed to perform dependency injection for field: " + field.getName();
+                }
+                throw new RuntimeException(message, e);
             }
         }
     }
@@ -144,7 +192,12 @@ public class FWApplication {
             if (parameterTypes.length != 1) {
                 throw new RuntimeException("Setter method should have exactly one parameter: " + method.getName());
             }
-            Object dependency = getBean(parameterTypes[0], method.getAnnotation(Qualifier.class));
+            Object dependency;
+            try {
+                dependency = getBean(parameterTypes[0], method.getAnnotation(Qualifier.class));
+            } catch (NoBeanFoundException e) {
+                throw new RuntimeException(e);
+            }
             try {
                 method.invoke(bean, dependency);
             } catch (Exception e) {
@@ -220,19 +273,32 @@ public class FWApplication {
         }
     }
 
-    public Object getBean(Class<?> clazz, Qualifier qualifier) {
+    public Object getBean(Class<?> clazz, Qualifier qualifier) throws NoBeanFoundException {
         List<Object> foundBeans = beans.stream()
-                .filter(bean -> bean.getClass().equals(clazz) ||
-                        Arrays.stream(bean.getClass().getInterfaces()).collect(Collectors.toSet()).contains(clazz))
+                .filter(bean -> containsClass(bean, clazz))
                 .filter(bean -> {
                     Profile profile = bean.getClass().getDeclaredAnnotation(Profile.class);
                     return activeProfile == null || profile == null || Arrays.stream(profile.value()).collect(Collectors.toSet()).contains(activeProfile);
                 })
                 .filter(bean -> qualifier == null || qualifier.equals(bean.getClass().getDeclaredAnnotation(Qualifier.class)))
                 .toList();
-        if (foundBeans.isEmpty()) throw new RuntimeException("No bean found for " + clazz.getName());
+        if (foundBeans.isEmpty()) throw new NoBeanFoundException("No bean found for " + clazz.getName());
         if (foundBeans.size() >= 2) throw new RuntimeException("Multiple beans found for " + clazz.getName());
         return foundBeans.get(0);
+    }
+
+    private boolean containsClass(Object object, Class<?> clazz) {
+        Object source = getOriginalObject(object);
+        return source.getClass().equals(clazz) ||
+                Arrays.stream(source.getClass().getInterfaces()).collect(Collectors.toSet()).contains(clazz);
+    }
+
+    private Object getOriginalObject(Object object) {
+        if (object instanceof Proxy) {
+            InvocationHandler handler = Proxy.getInvocationHandler(object);
+            return ((AsyncProxy) handler).getTarget();
+        }
+        return object;
     }
 
     private record MethodObjectPair(Method method, Object object) {
