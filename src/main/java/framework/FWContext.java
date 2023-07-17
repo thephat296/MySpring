@@ -3,6 +3,7 @@ package framework;
 import org.reflections.Reflections;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -31,24 +32,37 @@ public class FWContext {
     private void performDI() {
         for (Object bean : beans) {
             injectField(bean);
+            injectSetter(bean);
         }
     }
 
     private void injectField(Object bean) {
         for (Field field : bean.getClass().getDeclaredFields()) {
             if (field.isAnnotationPresent(Autowired.class)) {
-                Qualifier qualifier = null;
-                try {
-                    qualifier = field.getAnnotation(Qualifier.class);
-                } catch (NullPointerException ignored) {
-                }
-
-                Object instance = getBean(field.getType(), qualifier);
+                Qualifier qualifier = field.getAnnotation(Qualifier.class);
+                Object dependency = getBean(field.getType(), qualifier);
                 field.setAccessible(true);
                 try {
-                    field.set(bean, instance);
+                    field.set(bean, dependency);
                 } catch (IllegalAccessException e) {
-                    e.printStackTrace();
+                    throw new RuntimeException("Failed to perform dependency injection for field: " + field.getName(), e);
+                }
+            }
+        }
+    }
+
+    private void injectSetter(Object bean) {
+        for (Method method : bean.getClass().getMethods()) {
+            if (method.isAnnotationPresent(Autowired.class) && method.getName().startsWith("set")) {
+                Class<?>[] parameterTypes = method.getParameterTypes();
+                if (parameterTypes.length != 1) {
+                    throw new RuntimeException("Setter method should have exactly one parameter: " + method.getName());
+                }
+                Object dependency = getBean(parameterTypes[0], method.getAnnotation(Qualifier.class));
+                try {
+                    method.invoke(bean, dependency);
+                } catch (Exception e) {
+                    throw new RuntimeException("Failed to perform dependency injection for setter method: " + method.getName(), e);
                 }
             }
         }
@@ -64,8 +78,8 @@ public class FWContext {
                         Arrays.stream(bean.getClass().getInterfaces()).collect(Collectors.toSet()).contains(clazz))
                 .filter(bean -> qualifier == null || qualifier.equals(bean.getClass().getDeclaredAnnotation(Qualifier.class)))
                 .toList();
-        if (foundBeans.isEmpty()) throw new RuntimeException("No bean found!");
-        if (foundBeans.size() >= 2) throw new RuntimeException("Multiple beans found!");
+        if (foundBeans.isEmpty()) throw new RuntimeException("No bean found for " + clazz.getName());
+        if (foundBeans.size() >= 2) throw new RuntimeException("Multiple beans found for " + clazz.getName());
         return foundBeans.get(0);
     }
 }
