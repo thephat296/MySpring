@@ -70,32 +70,30 @@ public class FWContext {
 
     private void injectField(Object bean) {
         for (Field field : bean.getClass().getDeclaredFields()) {
-            if (field.isAnnotationPresent(Autowired.class)) {
-                Qualifier qualifier = field.getAnnotation(Qualifier.class);
-                Object dependency = getBean(field.getType(), qualifier);
-                field.setAccessible(true);
-                try {
-                    field.set(bean, dependency);
-                } catch (IllegalAccessException e) {
-                    throw new RuntimeException("Failed to perform dependency injection for field: " + field.getName(), e);
-                }
+            if (!field.isAnnotationPresent(Autowired.class)) continue;
+            Qualifier qualifier = field.getAnnotation(Qualifier.class);
+            Object dependency = getBean(field.getType(), qualifier);
+            field.setAccessible(true);
+            try {
+                field.set(bean, dependency);
+            } catch (IllegalAccessException e) {
+                throw new RuntimeException("Failed to perform dependency injection for field: " + field.getName(), e);
             }
         }
     }
 
     private void injectSetter(Object bean) {
         for (Method method : bean.getClass().getMethods()) {
-            if (method.isAnnotationPresent(Autowired.class) && method.getName().startsWith("set")) {
-                Class<?>[] parameterTypes = method.getParameterTypes();
-                if (parameterTypes.length != 1) {
-                    throw new RuntimeException("Setter method should have exactly one parameter: " + method.getName());
-                }
-                Object dependency = getBean(parameterTypes[0], method.getAnnotation(Qualifier.class));
-                try {
-                    method.invoke(bean, dependency);
-                } catch (Exception e) {
-                    throw new RuntimeException("Failed to perform dependency injection for setter method: " + method.getName(), e);
-                }
+            if (!method.isAnnotationPresent(Autowired.class) || !method.getName().startsWith("set")) continue;
+            Class<?>[] parameterTypes = method.getParameterTypes();
+            if (parameterTypes.length != 1) {
+                throw new RuntimeException("Setter method should have exactly one parameter: " + method.getName());
+            }
+            Object dependency = getBean(parameterTypes[0], method.getAnnotation(Qualifier.class));
+            try {
+                method.invoke(bean, dependency);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to perform dependency injection for setter method: " + method.getName(), e);
             }
         }
     }
@@ -103,18 +101,16 @@ public class FWContext {
     private void injectValues(Object bean) {
         Class<?> clazz = bean.getClass();
         Field[] fields = clazz.getDeclaredFields();
-
         for (Field field : fields) {
-            if (field.isAnnotationPresent(Value.class)) {
-                Value valueAnnotation = field.getAnnotation(Value.class);
-                String valueKey = valueAnnotation.value();
-                String propertyValue = properties.getProperty(valueKey);
-                field.setAccessible(true);
-                try {
-                    field.set(bean, propertyValue);
-                } catch (IllegalAccessException e) {
-                    throw new RuntimeException(e);
-                }
+            if (!field.isAnnotationPresent(Value.class)) continue;
+            Value valueAnnotation = field.getAnnotation(Value.class);
+            String valueKey = valueAnnotation.value();
+            String propertyValue = properties.getProperty(valueKey);
+            field.setAccessible(true);
+            try {
+                field.set(bean, propertyValue);
+            } catch (IllegalAccessException e) {
+                throw new RuntimeException("Failed to perform value injection for field: " + field.getName(), e);
             }
         }
     }
