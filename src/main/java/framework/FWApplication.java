@@ -46,6 +46,7 @@ public class FWApplication {
         loadProperties();
         setActiveProfile();
         performDI();
+        performScheduled();
     }
 
     private void setActiveProfile() {
@@ -133,6 +134,29 @@ public class FWApplication {
                 throw new RuntimeException("Failed to perform value injection for field: " + field.getName(), e);
             }
         }
+    }
+
+    private void performScheduled() {
+        for (Object bean : beans) {
+            for (Method method : bean.getClass().getMethods()) {
+                if (!method.isAnnotationPresent(Scheduled.class)) continue;
+                long fixedRate = method.getDeclaredAnnotation(Scheduled.class).fixedRate();
+                scheduleTask(bean, method, fixedRate);
+            }
+        }
+    }
+
+    private void scheduleTask(Object bean, Method method, long fixedRate) {
+        new Timer().scheduleAtFixedRate(new TimerTask() {
+            @Override
+            public void run() {
+                try {
+                    method.invoke(bean);
+                } catch (Exception e) {
+                    throw new RuntimeException("@Scheduled method " + method.getName() + " must not take any arguments or return anything", e);
+                }
+            }
+        }, 0, fixedRate);
     }
 
     public Object getBean(Class<?> clazz, Qualifier qualifier) {
