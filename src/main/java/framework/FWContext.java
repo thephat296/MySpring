@@ -2,18 +2,18 @@ package framework;
 
 import org.reflections.Reflections;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 public class FWContext {
     private final List<Object> beans = new ArrayList<>();
     private final List<Class<?>> lazyConstructionClazz = new ArrayList<>();
+    private final Properties properties = new Properties();
 
     public FWContext() {
     }
@@ -28,7 +28,15 @@ public class FWContext {
                 lazyConstructionClazz.add(serviceClass);
             }
         }
+        loadProperties();
         performDI();
+    }
+
+    private void loadProperties() {
+        try (InputStream input = getClass().getClassLoader().getResourceAsStream("application.properties")) {
+            properties.load(input);
+        } catch (IOException ignored) {
+        }
     }
 
     private void performDI() {
@@ -38,6 +46,7 @@ public class FWContext {
         for (Object bean : beans) {
             injectField(bean);
             injectSetter(bean);
+            injectValues(bean);
         }
     }
 
@@ -86,6 +95,25 @@ public class FWContext {
                     method.invoke(bean, dependency);
                 } catch (Exception e) {
                     throw new RuntimeException("Failed to perform dependency injection for setter method: " + method.getName(), e);
+                }
+            }
+        }
+    }
+
+    private void injectValues(Object bean) {
+        Class<?> clazz = bean.getClass();
+        Field[] fields = clazz.getDeclaredFields();
+
+        for (Field field : fields) {
+            if (field.isAnnotationPresent(Value.class)) {
+                Value valueAnnotation = field.getAnnotation(Value.class);
+                String valueKey = valueAnnotation.value();
+                String propertyValue = properties.getProperty(valueKey);
+                field.setAccessible(true);
+                try {
+                    field.set(bean, propertyValue);
+                } catch (IllegalAccessException e) {
+                    throw new RuntimeException(e);
                 }
             }
         }

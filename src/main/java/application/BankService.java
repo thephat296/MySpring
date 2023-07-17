@@ -7,7 +7,6 @@ import framework.Service;
 @Service
 public class BankService {
 
-
     private IEmailSender emailSender;
 
     @Autowired
