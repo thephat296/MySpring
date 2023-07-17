@@ -1,5 +1,6 @@
 package framework;
 
+import org.quartz.CronExpression;
 import org.reflections.Reflections;
 
 import java.io.IOException;
@@ -7,6 +8,8 @@ import java.io.InputStream;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.text.ParseException;
+import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -141,12 +144,19 @@ public class FWApplication {
             for (Method method : bean.getClass().getMethods()) {
                 if (!method.isAnnotationPresent(Scheduled.class)) continue;
                 long fixedRate = method.getDeclaredAnnotation(Scheduled.class).fixedRate();
-                scheduleTask(bean, method, fixedRate);
+                if (fixedRate != -1) {
+                    scheduleTimerTask(bean, method, Date.from(Instant.now()), fixedRate);
+                    continue;
+                }
+                String cronExpression = method.getDeclaredAnnotation(Scheduled.class).cron();
+                if (!cronExpression.isEmpty()) {
+                    scheduleTimerTask(bean, method, getNextExecutionTime(cronExpression), getPeriod(cronExpression));
+                }
             }
         }
     }
 
-    private void scheduleTask(Object bean, Method method, long fixedRate) {
+    private void scheduleTimerTask(Object bean, Method method, Date firstTime, long period) {
         new Timer().scheduleAtFixedRate(new TimerTask() {
             @Override
             public void run() {
@@ -156,7 +166,27 @@ public class FWApplication {
                     throw new RuntimeException("@Scheduled method " + method.getName() + " must not take any arguments or return anything", e);
                 }
             }
-        }, 0, fixedRate);
+        }, firstTime, period);
+    }
+
+    private Date getNextExecutionTime(String cronExpression) {
+        Date now = new Date();
+        try {
+            return new CronExpression(cronExpression).getNextValidTimeAfter(now);
+        } catch (ParseException e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    private long getPeriod(String cronExpression) {
+        try {
+            Date next = new CronExpression(cronExpression).getNextValidTimeAfter(new Date());
+            return next.getTime() - new Date().getTime();
+        } catch (ParseException e) {
+            e.printStackTrace();
+            return 0;
+        }
     }
 
     public Object getBean(Class<?> clazz, Qualifier qualifier) {

@@ -22,7 +22,7 @@ public class BankService {
         emailSender.sendEmail("deposit");
     }
 
-    @Scheduled(fixedRate = 5000)
+    @Scheduled(cron = "0/5 * * * * ?")
     public void sendScheduledEmail() {
         emailSender.sendEmail("Scheduled email");
     }

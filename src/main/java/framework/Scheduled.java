@@ -8,5 +8,7 @@ import java.lang.annotation.Target;
 @Target({ElementType.METHOD})
 @Retention(RetentionPolicy.RUNTIME)
 public @interface Scheduled {
-    long fixedRate();
+    long fixedRate() default -1;
+
+    String cron() default "";
 }
