@@ -2,6 +2,7 @@ package framework;
 
 import org.reflections.Reflections;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -12,6 +13,7 @@ import java.util.stream.Collectors;
 
 public class FWContext {
     private final List<Object> beans = new ArrayList<>();
+    private final List<Class<?>> lazyConstructionClazz = new ArrayList<>();
 
     public FWContext() {
     }
@@ -23,16 +25,37 @@ public class FWContext {
             try {
                 beans.add(serviceClass.getDeclaredConstructor().newInstance());
             } catch (Exception e) {
-                e.printStackTrace();
+                lazyConstructionClazz.add(serviceClass);
             }
         }
         performDI();
     }
 
     private void performDI() {
+        for (Class<?> clazz : lazyConstructionClazz) {
+            injectConstructor(clazz);
+        }
         for (Object bean : beans) {
             injectField(bean);
             injectSetter(bean);
+        }
+    }
+
+    private void injectConstructor(Class<?> clazz) {
+        Constructor<?>[] constructors = clazz.getConstructors();
+        if (constructors.length != 1 || !constructors[0].isAnnotationPresent(Autowired.class)) {
+            throw new RuntimeException("Failed to perform dependency injection for service class: " + clazz.getName());
+        }
+        Constructor<?> constructor = constructors[0];
+        Class<?>[] parameterTypes = constructor.getParameterTypes();
+        Object[] dependencies = new Object[parameterTypes.length];
+        for (int i = 0; i < parameterTypes.length; i++) {
+            dependencies[i] = getBean(parameterTypes[i], constructor.getParameters()[i].getAnnotation(Qualifier.class));
+        }
+        try {
+            beans.add(constructor.newInstance(dependencies));
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to perform dependency injection for constructor: " + constructor.getName(), e);
         }
     }
 

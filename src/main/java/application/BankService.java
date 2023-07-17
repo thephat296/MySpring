@@ -11,7 +11,10 @@ public class BankService {
     private IEmailSender emailSender;
 
     @Autowired
-    @Qualifier("EmailSender")
+    public BankService(@Qualifier("EmailSender") IEmailSender emailSender) {
+        this.emailSender = emailSender;
+    }
+
     public void setEmailService(EmailSender emailSender) {
         this.emailSender = emailSender;
     }
