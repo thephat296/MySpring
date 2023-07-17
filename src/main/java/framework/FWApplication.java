@@ -18,6 +18,7 @@ public class FWApplication {
     private final List<Class<?>> lazyConstructionClazz = new ArrayList<>();
     private final Properties properties = new Properties();
     private String activeProfile = null;
+    private final Map<Class<?>, List<MethodObjectPair>> eventMethodMap = new HashMap<>();
 
     private FWApplication() {
     }
@@ -48,12 +49,42 @@ public class FWApplication {
         }
         loadProperties();
         setActiveProfile();
+        initEventPublisher();
         performDI();
+        initEventListener();
         performScheduled();
     }
 
     private void setActiveProfile() {
         this.activeProfile = this.properties.getProperty("profile.active");
+    }
+
+    private void initEventListener() {
+        for (Object bean : beans) {
+            for (Method method : bean.getClass().getMethods()) {
+                if (!method.isAnnotationPresent(EventListener.class)) continue;
+                Class<?>[] params = method.getParameterTypes();
+                if (params.length != 1) {
+                    throw new RuntimeException("OnEvent method " + method.getName() + " must have maximum one parameter");
+                }
+                Class<?> eventClazz = params[0];
+                eventMethodMap.computeIfAbsent(eventClazz, event -> new ArrayList<>())
+                        .add(new MethodObjectPair(method, bean));
+            }
+        }
+    }
+
+    private void initEventPublisher() {
+        ApplicationEventPublisher publisher = event -> eventMethodMap.get(event.getClass()).forEach(methodObjectPair -> {
+            Method method = methodObjectPair.method;
+            Object object = methodObjectPair.object;
+            try {
+                method.invoke(object, event);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to notify event listener of class" + object.getClass().getName(), e);
+            }
+        });
+        beans.add(publisher);
     }
 
     private void loadProperties() {
@@ -202,5 +233,8 @@ public class FWApplication {
         if (foundBeans.isEmpty()) throw new RuntimeException("No bean found for " + clazz.getName());
         if (foundBeans.size() >= 2) throw new RuntimeException("Multiple beans found for " + clazz.getName());
         return foundBeans.get(0);
+    }
+
+    private record MethodObjectPair(Method method, Object object) {
     }
 }

@@ -1,5 +1,6 @@
 package application;
 
+import framework.ApplicationEventPublisher;
 import framework.Autowired;
 import framework.Scheduled;
 import framework.Service;
@@ -8,6 +9,9 @@ import framework.Service;
 public class BankService {
 
     private IEmailSender emailSender;
+
+    @Autowired
+    ApplicationEventPublisher publisher;
 
     @Autowired
     public BankService(IEmailSender emailSender) {
@@ -19,7 +23,8 @@ public class BankService {
     }
 
     public void deposit() {
-        emailSender.sendEmail("deposit");
+//        emailSender.sendEmail("deposit");
+        publisher.publishEvent(new DepositEvent("deposit"));
     }
 
     @Scheduled(cron = "0/5 * * * * ?")
