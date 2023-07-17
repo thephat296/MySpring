@@ -10,12 +10,26 @@ import java.lang.reflect.Method;
 import java.util.*;
 import java.util.stream.Collectors;
 
-public class FWContext {
+public class FWApplication {
     private final List<Object> beans = new ArrayList<>();
     private final List<Class<?>> lazyConstructionClazz = new ArrayList<>();
     private final Properties properties = new Properties();
 
-    public FWContext() {
+    private FWApplication() {
+    }
+
+    public static void run(Class<?> clazz) {
+        FWApplication fwApplication = new FWApplication();
+        try {
+            Object source = clazz.getDeclaredConstructor().newInstance();
+            fwApplication.beans.add(source);
+            fwApplication.scanAndInstantiate(clazz.getPackageName());
+            if (source instanceof Runnable) {
+                ((Runnable) source).run();
+            }
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     public void scanAndInstantiate(String basePackage) {
