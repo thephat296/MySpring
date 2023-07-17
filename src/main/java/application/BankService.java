@@ -1,7 +1,6 @@
 package application;
 
 import framework.Autowired;
-import framework.Qualifier;
 import framework.Service;
 
 @Service
@@ -10,7 +9,7 @@ public class BankService {
     private IEmailSender emailSender;
 
     @Autowired
-    public BankService(@Qualifier("EmailSender") IEmailSender emailSender) {
+    public BankService(IEmailSender emailSender) {
         this.emailSender = emailSender;
     }
 

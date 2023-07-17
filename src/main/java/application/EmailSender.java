@@ -1,11 +1,11 @@
 package application;
 
-import framework.Qualifier;
+import framework.Profile;
 import framework.Service;
 import framework.Value;
 
 @Service
-@Qualifier("EmailSender")
+@Profile("prod")
 public class EmailSender implements IEmailSender {
 
     @Value("sender")

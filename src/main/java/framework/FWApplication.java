@@ -14,6 +14,7 @@ public class FWApplication {
     private final List<Object> beans = new ArrayList<>();
     private final List<Class<?>> lazyConstructionClazz = new ArrayList<>();
     private final Properties properties = new Properties();
+    private String activeProfile = null;
 
     private FWApplication() {
     }
@@ -43,7 +44,12 @@ public class FWApplication {
             }
         }
         loadProperties();
+        setActiveProfile();
         performDI();
+    }
+
+    private void setActiveProfile() {
+        this.activeProfile = this.properties.getProperty("profile.active");
     }
 
     private void loadProperties() {
@@ -129,14 +135,14 @@ public class FWApplication {
         }
     }
 
-    public Object getBean(Class<?> clazz) {
-        return getBean(clazz, null);
-    }
-
     public Object getBean(Class<?> clazz, Qualifier qualifier) {
         List<Object> foundBeans = beans.stream()
                 .filter(bean -> bean.getClass().equals(clazz) ||
                         Arrays.stream(bean.getClass().getInterfaces()).collect(Collectors.toSet()).contains(clazz))
+                .filter(bean -> {
+                    Profile profile = bean.getClass().getDeclaredAnnotation(Profile.class);
+                    return activeProfile == null || profile == null || Arrays.stream(profile.value()).collect(Collectors.toSet()).contains(activeProfile);
+                })
                 .filter(bean -> qualifier == null || qualifier.equals(bean.getClass().getDeclaredAnnotation(Qualifier.class)))
                 .toList();
         if (foundBeans.isEmpty()) throw new RuntimeException("No bean found for " + clazz.getName());
