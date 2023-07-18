@@ -1,9 +1,8 @@
 package application;
 
-import framework.EventListener;
-import framework.Profile;
-import framework.Service;
-import framework.Value;
+import framework.*;
+
+import java.util.concurrent.CompletableFuture;
 
 @Service
 @Profile("prod")
@@ -21,4 +20,10 @@ public class EmailSender implements IEmailSender {
     public void onEvent(DepositEvent event) {
         sendEmail(event.getMessage());
     }
+
+//    @Async
+//    public CompletableFuture<Integer> addTwoNumber(int a, int b) throws InterruptedException {
+//        Thread.sleep(3000);
+//        return CompletableFuture.completedFuture(a + b);
+//    }
 }
