@@ -12,7 +12,8 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 public class FWApplication {
-    private final List<Object> beans = new ArrayList<>();
+    private final List<Object> beans = new ArrayList<>(); // bean or proxy bean
+    private final List<Object> originalBeans = new ArrayList<>();
     private final List<Class<?>> lazyConstructionClazz = new ArrayList<>();
     private final Properties properties = new Properties();
     private String activeProfile = null;
@@ -39,23 +40,24 @@ public class FWApplication {
         loadProperties();
         setActiveProfile();
         Reflections reflections = new Reflections(basePackage);
-        Set<Class<?>> serviceTypes = reflections.getTypesAnnotatedWith(Service.class);
-        for (Class<?> serviceClass : serviceTypes) {
+        Set<Class<?>> serviceClasses = reflections.getTypesAnnotatedWith(Service.class);
+        injectConstructors(serviceClasses);
+        wrapAsyncMethods();
+        initEventPublisher();
+        originalBeans.addAll(beans.stream().map(this::getOriginalObject).toList());
+        performDI();
+        initEventListener();
+        performScheduled();
+    }
+
+    private void injectConstructors(Set<Class<?>> serviceClasses) {
+        for (Class<?> serviceClass : serviceClasses) {
             try {
                 beans.add(serviceClass.getDeclaredConstructor().newInstance());
             } catch (Exception e) {
                 lazyConstructionClazz.add(serviceClass);
             }
         }
-        injectConstructors();
-        wrapAsyncMethods();
-        initEventPublisher();
-        performDI();
-        initEventListener();
-        performScheduled();
-    }
-
-    private void injectConstructors() {
         while (!lazyConstructionClazz.isEmpty()) {
             int size = lazyConstructionClazz.size();
             Iterator<Class<?>> iterator = lazyConstructionClazz.iterator();
@@ -87,7 +89,7 @@ public class FWApplication {
     }
 
     private void initEventListener() {
-        for (Object bean : beans) {
+        for (Object bean : originalBeans) {
             for (Method method : bean.getClass().getMethods()) {
                 if (!method.isAnnotationPresent(EventListener.class)) continue;
                 Class<?>[] params = method.getParameterTypes();
@@ -122,7 +124,7 @@ public class FWApplication {
     }
 
     private void performDI() {
-        for (Object bean : beans) {
+        for (Object bean : originalBeans) {
             injectField(bean);
             injectSetter(bean);
             injectValues(bean);
@@ -160,8 +162,7 @@ public class FWApplication {
     }
 
     private void injectField(Object bean) {
-        Object originalBean = getOriginalObject(bean);
-        for (Field field : originalBean.getClass().getDeclaredFields()) {
+        for (Field field : bean.getClass().getDeclaredFields()) {
             if (!field.isAnnotationPresent(Autowired.class)) continue;
             Qualifier qualifier = field.getAnnotation(Qualifier.class);
             Object dependency;
@@ -172,7 +173,7 @@ public class FWApplication {
             }
             field.setAccessible(true);
             try {
-                field.set(originalBean, dependency);
+                field.set(bean, dependency);
             } catch (IllegalAccessException | IllegalArgumentException e) {
                 String message;
                 if (dependency instanceof Proxy) {
@@ -224,7 +225,7 @@ public class FWApplication {
     }
 
     private void performScheduled() {
-        for (Object bean : beans) {
+        for (Object bean : originalBeans) {
             for (Method method : bean.getClass().getMethods()) {
                 if (!method.isAnnotationPresent(Scheduled.class)) continue;
                 long fixedRate = method.getDeclaredAnnotation(Scheduled.class).fixedRate();
