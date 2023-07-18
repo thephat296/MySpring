@@ -17,6 +17,7 @@ public class AsyncProxy implements InvocationHandler {
         if (method.isAnnotationPresent(Async.class)) {
             return CompletableFuture.supplyAsync(() -> {
                 try {
+                    System.out.println("Run method " + method.getName() + " in AsyncProxy");
                     return method.invoke(target, args);
                 } catch (Exception e) {
                     e.printStackTrace();

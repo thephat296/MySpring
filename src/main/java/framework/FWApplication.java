@@ -41,8 +41,7 @@ public class FWApplication {
         setActiveProfile();
         Reflections reflections = new Reflections(basePackage);
         Set<Class<?>> serviceClasses = reflections.getTypesAnnotatedWith(Service.class);
-        injectConstructors(serviceClasses);
-        wrapAsyncMethods();
+        instantiateBeans(serviceClasses);
         initEventPublisher();
         originalBeans.addAll(beans.stream().map(this::getOriginalObject).toList());
         performDI();
@@ -50,37 +49,32 @@ public class FWApplication {
         performScheduled();
     }
 
-    private void injectConstructors(Set<Class<?>> serviceClasses) {
-        for (Class<?> serviceClass : serviceClasses) {
+    private void instantiateBeans(Set<Class<?>> serviceTypes) {
+        Class<?>[] instantiateOrders = instantiateBeansStrategy(buildGraph(serviceTypes));
+        for (Class<?> clazz : instantiateOrders) {
+            Constructor<?>[] constructors = clazz.getConstructors();
+            if (constructors.length != 1) {
+                throw new RuntimeException("Failed to perform dependency injection for service class: " + clazz.getName());
+            }
+            Constructor<?> constructor = constructors[0];
+            Class<?>[] parameterTypes = constructor.getParameterTypes();
+            Object[] dependencies = new Object[parameterTypes.length];
+            for (int i = 0; i < parameterTypes.length; i++) {
+                dependencies[i] = getBean(parameterTypes[i], constructor.getParameters()[i].getAnnotation(Qualifier.class));
+            }
             try {
-                beans.add(serviceClass.getDeclaredConstructor().newInstance());
+                Object bean = constructor.newInstance(dependencies);
+                boolean isAsyncAnnotationPresent =
+                        Arrays.stream(bean.getClass().getMethods()).anyMatch(method -> method.isAnnotationPresent(Async.class));
+                if (isAsyncAnnotationPresent) {
+                    Object proxyBean = Proxy.newProxyInstance(clazz.getClassLoader(), clazz.getInterfaces(), new AsyncProxy(bean));
+                    beans.add(proxyBean);
+                } else {
+                    beans.add(bean);
+                }
             } catch (Exception e) {
-                lazyConstructionClazz.add(serviceClass);
+                throw new RuntimeException("Failed to perform dependency injection for constructor: " + constructor.getName(), e);
             }
-        }
-        while (!lazyConstructionClazz.isEmpty()) {
-            int size = lazyConstructionClazz.size();
-            Iterator<Class<?>> iterator = lazyConstructionClazz.iterator();
-            while (iterator.hasNext()) {
-                injectConstructor(iterator.next());
-                iterator.remove();
-            }
-            if (lazyConstructionClazz.size() == size) {
-                throw new RuntimeException("Circular dependency when performing constructor injection");
-            }
-        }
-    }
-
-    private void wrapAsyncMethods() {
-        for (int i = 0; i < beans.size(); i++) {
-            Object bean = beans.get(i);
-            if (bean instanceof AsyncProxy) continue;
-            boolean isAsyncAnnotationPresent =
-                    Arrays.stream(bean.getClass().getMethods()).anyMatch(method -> method.isAnnotationPresent(Async.class));
-            if (!isAsyncAnnotationPresent) continue;
-            Class<?> clazz = bean.getClass();
-            Object proxyBean = Proxy.newProxyInstance(clazz.getClassLoader(), clazz.getInterfaces(), new AsyncProxy(bean));
-            beans.set(i, proxyBean);
         }
     }
 
@@ -131,46 +125,11 @@ public class FWApplication {
         }
     }
 
-    private void injectConstructor(Class<?> clazz) {
-        Constructor<?>[] constructors = clazz.getConstructors();
-        if (constructors.length != 1 || !constructors[0].isAnnotationPresent(Autowired.class)) {
-            throw new RuntimeException("Failed to perform dependency injection for service class: " + clazz.getName());
-        }
-        Constructor<?> constructor = constructors[0];
-        Class<?>[] parameterTypes = constructor.getParameterTypes();
-        Object[] dependencies = new Object[parameterTypes.length];
-        for (int i = 0; i < parameterTypes.length; i++) {
-            try {
-                dependencies[i] = getBean(parameterTypes[i], constructor.getParameters()[i].getAnnotation(Qualifier.class));
-            } catch (NoBeanFoundException e) {
-                return;
-            }
-        }
-        try {
-            Object bean = constructor.newInstance(dependencies);
-            boolean isAsyncAnnotationPresent =
-                    Arrays.stream(bean.getClass().getMethods()).anyMatch(method -> method.isAnnotationPresent(Async.class));
-            if (isAsyncAnnotationPresent) {
-                Object proxyBean = Proxy.newProxyInstance(clazz.getClassLoader(), clazz.getInterfaces(), new AsyncProxy(bean));
-                beans.add(proxyBean);
-            } else {
-                beans.add(bean);
-            }
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to perform dependency injection for constructor: " + constructor.getName(), e);
-        }
-    }
-
     private void injectField(Object bean) {
         for (Field field : bean.getClass().getDeclaredFields()) {
             if (!field.isAnnotationPresent(Autowired.class)) continue;
             Qualifier qualifier = field.getAnnotation(Qualifier.class);
-            Object dependency;
-            try {
-                dependency = getBean(field.getType(), qualifier);
-            } catch (NoBeanFoundException e) {
-                throw new RuntimeException(e);
-            }
+            Object dependency = getBean(field.getType(), qualifier);
             field.setAccessible(true);
             try {
                 field.set(bean, dependency);
@@ -193,12 +152,7 @@ public class FWApplication {
             if (parameterTypes.length != 1) {
                 throw new RuntimeException("Setter method should have exactly one parameter: " + method.getName());
             }
-            Object dependency;
-            try {
-                dependency = getBean(parameterTypes[0], method.getAnnotation(Qualifier.class));
-            } catch (NoBeanFoundException e) {
-                throw new RuntimeException(e);
-            }
+            Object dependency = getBean(parameterTypes[0], method.getAnnotation(Qualifier.class));
             try {
                 method.invoke(bean, dependency);
             } catch (Exception e) {
@@ -274,7 +228,7 @@ public class FWApplication {
         }
     }
 
-    public Object getBean(Class<?> clazz, Qualifier qualifier) throws NoBeanFoundException {
+    public Object getBean(Class<?> clazz, Qualifier qualifier) {
         List<Object> foundBeans = beans.stream()
                 .filter(bean -> containsClass(bean, clazz))
                 .filter(bean -> {
@@ -283,7 +237,7 @@ public class FWApplication {
                 })
                 .filter(bean -> qualifier == null || qualifier.equals(bean.getClass().getDeclaredAnnotation(Qualifier.class)))
                 .toList();
-        if (foundBeans.isEmpty()) throw new NoBeanFoundException("No bean found for " + clazz.getName());
+        if (foundBeans.isEmpty()) throw new RuntimeException("No bean found for " + clazz.getName());
         if (foundBeans.size() >= 2) throw new RuntimeException("Multiple beans found for " + clazz.getName());
         return foundBeans.get(0);
     }
@@ -303,5 +257,77 @@ public class FWApplication {
     }
 
     private record MethodObjectPair(Method method, Object object) {
+    }
+
+    private Class<?>[] instantiateBeansStrategy(Map<Class<?>, Set<Class<?>>> graph) {
+        int index = 0;
+        Class<?>[] orders = new Class<?>[graph.size()];
+        ArrayDeque<Class<?>> stack = new ArrayDeque<>();
+        Set<Class<?>> visited = new HashSet<>();
+        for (Class<?> vertex : graph.keySet()) {
+            if (!visited.contains(vertex)) {
+                visited.add(vertex);
+                stack.push(vertex);
+                while (!stack.isEmpty()) {
+                    Class<?> visitedVertex = stack.peek();
+                    Set<Class<?>> adjVertices = graph.get(visitedVertex);
+                    boolean isBacktrack = true;
+                    for (Class<?> adjVertex : adjVertices) {
+                        if (!visited.contains(adjVertex)) {
+                            visited.add(adjVertex);
+                            stack.push(adjVertex);
+                            isBacktrack = false;
+                        }
+                    }
+                    if (isBacktrack) {
+                        Class<?> completedVertex = stack.pop();
+                        orders[index++] = completedVertex;
+                    }
+                }
+            }
+        }
+        return orders;
+    }
+
+    private Map<Class<?>, Set<Class<?>>> buildGraph(Set<Class<?>> classes) {
+        Map<Class<?>, Set<Class<?>>> map = new HashMap<>();
+        Map<Class<?>, Set<Class<?>>> interfaceConcreteClassMap = buildIntegerConcreteClassMap(classes);
+        for (Class<?> clazz : classes) {
+            Constructor<?>[] constructors = clazz.getConstructors();
+            Constructor<?> constructor = constructors[0];
+            Class<?>[] parameterTypes = constructor.getParameterTypes();
+            List<Class<?>> dependencies = new ArrayList<>();
+            for (Class<?> type : parameterTypes) {
+                if (!interfaceConcreteClassMap.containsKey(type)) {
+                    dependencies.add(type);
+                    continue;
+                }
+                Set<Class<?>> concreteClasses = interfaceConcreteClassMap.get(type);
+                Qualifier qualifier = type.getDeclaredAnnotation(Qualifier.class);
+                List<Class<?>> foundClasses = concreteClasses.stream()
+                        .filter(c -> {
+                            Profile profile = c.getDeclaredAnnotation(Profile.class);
+                            return activeProfile == null || profile == null || Arrays.stream(profile.value()).collect(Collectors.toSet()).contains(activeProfile);
+                        })
+                        .filter(c -> qualifier == null || qualifier.equals(c.getDeclaredAnnotation(Qualifier.class)))
+                        .toList();
+                if (foundClasses.isEmpty()) throw new RuntimeException("No bean found for " + clazz.getName());
+                if (foundClasses.size() >= 2) throw new RuntimeException("Multiple beans found for " + clazz.getName());
+                dependencies.addAll(foundClasses);
+            }
+            map.put(clazz, new HashSet<>(dependencies));
+        }
+        return map;
+    }
+
+    private Map<Class<?>, Set<Class<?>>> buildIntegerConcreteClassMap(Set<Class<?>> classes) {
+        Map<Class<?>, Set<Class<?>>> map = new HashMap<>();
+        for (Class<?> clazz : classes) {
+            Class<?>[] interfaces = clazz.getInterfaces();
+            for (Class<?> i : interfaces) {
+                map.computeIfAbsent(i, k -> new HashSet<>()).add(clazz);
+            }
+        }
+        return map;
     }
 }
