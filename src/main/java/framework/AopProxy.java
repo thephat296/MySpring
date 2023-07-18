@@ -4,6 +4,7 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 public class AopProxy implements InvocationHandler {
     private final Object target;
@@ -41,6 +42,28 @@ public class AopProxy implements InvocationHandler {
         for (Method mt : aspectMethods) {
             if (mt.isAnnotationPresent(After.class)) {
                 mt.invoke(aspectData.aspectBean());
+            }
+        }
+
+        for (Method mt : aspectMethods) {
+            if (mt.isAnnotationPresent(Around.class)) {
+//                mt.invoke(aspectData.aspectBean(), (Supplier<Object>) o -> {
+//                    try {
+//                        return method.invoke(target, args);
+//                    } catch (Exception e) {
+//                        throw new RuntimeException(e);
+//                    }
+//                });
+                mt.invoke(aspectData.aspectBean(), new Supplier<>() {
+                    @Override
+                    public Object get() {
+                        try {
+                            return method.invoke(target, args);
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                });
             }
         }
         return returnValue;

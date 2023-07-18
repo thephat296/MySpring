@@ -68,6 +68,8 @@ public class FWApplication {
                     pointcut = method.getDeclaredAnnotation(Before.class).pointcut();
                 } else if (method.isAnnotationPresent(After.class)) {
                     pointcut = method.getDeclaredAnnotation(After.class).pointcut();
+                } else if (method.isAnnotationPresent(Around.class)) {
+                    pointcut = method.getDeclaredAnnotation(Around.class).pointcut();
                 } else {
                     continue;
                 }
