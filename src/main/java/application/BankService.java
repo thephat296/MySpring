@@ -1,6 +1,9 @@
 package application;
 
-import framework.*;
+import framework.ApplicationEventPublisher;
+import framework.Autowired;
+import framework.Scheduled;
+import framework.Service;
 
 @Service
 public class BankService implements IBankService {
@@ -19,7 +22,6 @@ public class BankService implements IBankService {
         this.emailSender = emailSender;
     }
 
-    @Async
     @Override
     public void deposit() {
 //        emailSender.sendEmail("deposit");

@@ -36,17 +36,54 @@ public class FWApplication {
         }
     }
 
+    private final Map<Class<?>, Map<String, AspectData>> aopMap = new HashMap<>();
+
     public void scanAndInstantiate(String basePackage) {
         loadProperties();
         setActiveProfile();
         Reflections reflections = new Reflections(basePackage);
         Set<Class<?>> serviceClasses = reflections.getTypesAnnotatedWith(Service.class);
+        Set<Class<?>> aspectClasses = reflections.getTypesAnnotatedWith(Aspect.class);
+        instantiateAspectBeans(aspectClasses);
         instantiateBeans(serviceClasses);
         initEventPublisher();
         originalBeans.addAll(beans.stream().map(this::getOriginalObject).toList());
         performDI();
         initEventListener();
         performScheduled();
+    }
+
+    private void instantiateAspectBeans(Set<Class<?>> classes) {
+        for (Class<?> clazz : classes) {
+            Method[] methods = clazz.getMethods();
+            Object aspectBean;
+            try {
+                aspectBean = clazz.getDeclaredConstructor().newInstance();
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+            for (Method method : methods) {
+                String pointcut;
+                if (method.isAnnotationPresent(Before.class)) {
+                    pointcut = method.getDeclaredAnnotation(Before.class).pointcut();
+                } else if (method.isAnnotationPresent(After.class)) {
+                    pointcut = method.getDeclaredAnnotation(After.class).pointcut();
+                } else {
+                    continue;
+                }
+                String className = pointcut.split("\\.")[0];
+                String methodName = pointcut.split("\\.")[1];
+                Class<?> aClass;
+                try {
+                    aClass = Class.forName(clazz.getPackageName() + "." + className);
+                } catch (ClassNotFoundException e) {
+                    throw new RuntimeException(e);
+                }
+                aopMap.computeIfAbsent(aClass, k -> new HashMap<>())
+                        .computeIfAbsent(methodName, k -> new AspectData(aspectBean, new HashSet<>()))
+                        .aspectMethods().add(method);
+            }
+        }
     }
 
     private void instantiateBeans(Set<Class<?>> serviceTypes) {
@@ -66,12 +103,14 @@ public class FWApplication {
                 Object bean = constructor.newInstance(dependencies);
                 boolean isAsyncAnnotationPresent =
                         Arrays.stream(bean.getClass().getMethods()).anyMatch(method -> method.isAnnotationPresent(Async.class));
+                Object finalBean = bean;
                 if (isAsyncAnnotationPresent) {
-                    Object proxyBean = Proxy.newProxyInstance(clazz.getClassLoader(), clazz.getInterfaces(), new AsyncProxy(bean));
-                    beans.add(proxyBean);
-                } else {
-                    beans.add(bean);
+                    finalBean = Proxy.newProxyInstance(clazz.getClassLoader(), clazz.getInterfaces(), new AsyncProxy(bean));
                 }
+                if (aopMap.containsKey(clazz)) {
+                    finalBean = Proxy.newProxyInstance(clazz.getClassLoader(), clazz.getInterfaces(), new AopProxy(finalBean, aopMap.get(clazz)));
+                }
+                beans.add(finalBean);
             } catch (Exception e) {
                 throw new RuntimeException("Failed to perform dependency injection for constructor: " + constructor.getName(), e);
             }
@@ -251,7 +290,16 @@ public class FWApplication {
     private Object getOriginalObject(Object object) {
         if (object instanceof Proxy) {
             InvocationHandler handler = Proxy.getInvocationHandler(object);
-            return ((AsyncProxy) handler).getTarget();
+            Object source;
+            if (handler instanceof AopProxy) {
+                source = ((AopProxy) handler).getTarget();
+                if (source instanceof AsyncProxy) {
+                    source = ((AsyncProxy) handler).target();
+                }
+            } else {
+                source = ((AsyncProxy) handler).target();
+            }
+            return source;
         }
         return object;
     }
@@ -291,7 +339,7 @@ public class FWApplication {
 
     private Map<Class<?>, Set<Class<?>>> buildGraph(Set<Class<?>> classes) {
         Map<Class<?>, Set<Class<?>>> map = new HashMap<>();
-        Map<Class<?>, Set<Class<?>>> interfaceConcreteClassMap = buildIntegerConcreteClassMap(classes);
+        Map<Class<?>, Set<Class<?>>> interfaceConcreteClassMap = buildInterfaceConcreteClassMap(classes);
         for (Class<?> clazz : classes) {
             Constructor<?>[] constructors = clazz.getConstructors();
             Constructor<?> constructor = constructors[0];
@@ -320,7 +368,7 @@ public class FWApplication {
         return map;
     }
 
-    private Map<Class<?>, Set<Class<?>>> buildIntegerConcreteClassMap(Set<Class<?>> classes) {
+    private Map<Class<?>, Set<Class<?>>> buildInterfaceConcreteClassMap(Set<Class<?>> classes) {
         Map<Class<?>, Set<Class<?>>> map = new HashMap<>();
         for (Class<?> clazz : classes) {
             Class<?>[] interfaces = clazz.getInterfaces();
